@@ -20,5 +20,8 @@ test_frame: tests/test_frame.c $(OBJ)
 test_container: tests/test_container.c $(OBJ)
 	$(CC) $(CFLAGS) tests/test_container.c $(OBJ) -o test_container
 
+test_bitstream: tests/test_bitstream.c $(OBJ)
+	$(CC) $(CFLAGS) tests/test_bitstream.c $(OBJ) -o test_bitstream
+
 clean:
 	rm -f $(OBJ) libcrap.a test_frame test_container

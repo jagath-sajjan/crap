@@ -1,0 +1,6 @@
+*.o
+*.a
+test_frame
+test_container
+test_bitstream
+test_colorspace

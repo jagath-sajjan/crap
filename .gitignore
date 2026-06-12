@@ -4,3 +4,6 @@ test_frame
 test_container
 test_bitstream
 test_colorspace
+test_dct
+tmp/
+/tmp

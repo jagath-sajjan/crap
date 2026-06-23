@@ -128,3 +128,6 @@ int  crap_seek_pts(
 );
 
 #endif // CONTAINER_H
+
+uint32_t crap_crc32(const uint8_t *data, size_t len);
+

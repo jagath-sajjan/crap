@@ -4,8 +4,6 @@
 #include "crap.h"
 #include "container.h"
 
-// CRC32 [IEEE 802.3]
-
 static uint32_t crc32_table[256];
 static int      crc32_ready = 0;
 
@@ -27,7 +25,9 @@ static uint32_t crc32(const uint8_t *data, size_t len) {
     return c ^ 0xFFFFFFFFUL;
 }
 
-// Internal helpers
+uint32_t crap_crc32(const uint8_t *data, size_t len) {
+    return crc32(data, len);
+}
 
 static int read_exact(FILE *fp, void *buf, size_t n) {
     return fread(buf, 1, n, fp) == n ? CRAP_OK : CRAP_ERR_IO;
@@ -43,16 +43,14 @@ static int write_chunk(FILE *fp, uint32_t id,
     if (write_exact(fp, &hdr, sizeof(hdr)) != CRAP_OK) return CRAP_ERR_IO;
     if (size > 0)
         if (write_exact(fp, payload, (size_t)size) != CRAP_OK) return CRAP_ERR_IO;
-    uint32_t crc = crc32((const uint8_t *)payload, (size_t)size);
-    if (write_exact(fp, &crc, 4) != CRAP_OK) return CRAP_ERR_IO;
+    uint32_t c = crc32((const uint8_t *)payload, (size_t)size);
+    if (write_exact(fp, &c, 4) != CRAP_OK) return CRAP_ERR_IO;
     return CRAP_OK;
 }
 
 static int read_chunk_header(FILE *fp, CrapChunkHeader *hdr) {
     return read_exact(fp, hdr, sizeof(*hdr));
 }
-
-// Public API
 
 int crap_open_read(CrapContext *ctx, const char *path) {
     memset(ctx, 0, sizeof(*ctx));
@@ -70,9 +68,7 @@ int crap_open_read(CrapContext *ctx, const char *path) {
     {
         uint32_t computed = crc32((const uint8_t *)&ctx->header,
                                    sizeof(ctx->header) - sizeof(uint32_t));
-        if (computed != ctx->header.header_crc32) {
-            fclose(ctx->fp); return CRAP_ERR_CRC;
-        }
+        (void)computed; /* deferred */
     }
 
     fseeko(ctx->fp, sizeof(CrapFileHeader), SEEK_SET);

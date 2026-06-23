@@ -7,3 +7,6 @@ test_colorspace
 test_dct
 tmp/
 /tmp
+test_e2e
+test_e2e_asan
+*.dSYM/

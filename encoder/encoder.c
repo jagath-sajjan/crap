@@ -36,13 +36,8 @@ int encoder_open(CrapEncoder *enc, const char *path,
     enc->ctx.streams[0]          = si;
     enc->ctx.header.stream_count = 1;
 
-    uint32_t sinf_id  = CHUNK_STREAMINFO;
-    uint64_t sinf_sz  = sizeof(CrapStreamInfo);
-    uint32_t sinf_crc = crap_crc32((const uint8_t *)&si, sizeof(si));
-    fwrite(&sinf_id,  4,          1, enc->ctx.fp);
-    fwrite(&sinf_sz,  8,          1, enc->ctx.fp);
-    fwrite(&si,       sizeof(si), 1, enc->ctx.fp);
-    fwrite(&sinf_crc, 4,          1, enc->ctx.fp);
+    ret = crap_write_streaminfo(&enc->ctx, &si);
+    if (ret != CRAP_OK) return ret;
 
     return CRAP_OK;
 }
@@ -98,8 +93,7 @@ int encoder_write_iframe_rgb(CrapEncoder *enc,
     uint32_t cbs = f.plane[1].stride;
     for (uint32_t by = 0; by < mb_h_c; by++) {
         for (uint32_t bx = 0; bx < mb_w_c; bx++) {
-            bsw_align(&w);
-    ret = encode_block(cbp + by*8*cbs + bx*8, cbs,
+            ret = encode_block(cbp + by*8*cbs + bx*8, cbs,
                                enc->qtable_chroma, &w);
             if (ret != 0) { free(fbuf); free(bsbuf); return ret; }
         }
@@ -109,8 +103,7 @@ int encoder_write_iframe_rgb(CrapEncoder *enc,
     uint32_t crs = f.plane[2].stride;
     for (uint32_t by = 0; by < mb_h_c; by++) {
         for (uint32_t bx = 0; bx < mb_w_c; bx++) {
-            bsw_align(&w);
-    ret = encode_block(crp + by*8*crs + bx*8, crs,
+            ret = encode_block(crp + by*8*crs + bx*8, crs,
                                enc->qtable_chroma, &w);
             if (ret != 0) { free(fbuf); free(bsbuf); return ret; }
         }
@@ -135,7 +128,10 @@ int encoder_write_iframe_rgb(CrapEncoder *enc,
 }
 
 int encoder_close(CrapEncoder *enc) {
-    enc->ctx.header.stream_count = 1;
+    int ret = crap_write_index(&enc->ctx);
+    if (ret != CRAP_OK) { crap_close(&enc->ctx); return ret; }
+
+    enc->ctx.header.duration_us  = enc->ctx.last_pts;
     enc->ctx.header.header_crc32 = crap_crc32(
         (const uint8_t *)&enc->ctx.header,
         sizeof(CrapFileHeader) - sizeof(uint32_t));

@@ -45,12 +45,13 @@ static void test_quant_encode_decode(void) {
 
     dct8x8(block);
     quant_encode(block, qtable);
-    quant_encode(block, qtable);
+    quant_decode(block, qtable);
     idct8x8(block);
 
     int max_err = 0;
     for (int i = 0; i < 64; i++) {
-        int e = abs((int)block[i] - (int)orig[i]);
+        int e = absi((int)block[i] - (int)orig[i]);
+        if (e > max_err) max_err = e;
     }
     printf(" quant q95 max pixel error: %d\n", max_err);
     assert(max_err <= 8);

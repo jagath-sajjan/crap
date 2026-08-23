@@ -5,8 +5,12 @@ test_container
 test_bitstream
 test_colorspace
 test_dct
-tmp/
-/tmp
+test_quant
 test_e2e
 test_e2e_asan
 *.dSYM/
+craprec
+crapplay
+*.crap
+.idea/
+.DS_Store

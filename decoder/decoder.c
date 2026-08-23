@@ -50,10 +50,24 @@ static int decode_block(BSReader *r, uint8_t *dst, uint32_t stride,
 CrapFrame *decoder_next_frame(CrapDecoder *dec) {
     uint32_t max_compressed = dec->width * dec->height * 3;
     uint8_t *compressed = malloc(max_compressed);
+    if (!compressed) return NULL;
 
     CrapFrameHeader fh;
-    int ret = crap_read_frame(&dec->ctx, &fh, compressed, max_compressed);
-    if (ret != CRAP_OK) { free(compressed); return NULL; }
+    for (;;) {
+        int ret = crap_peek_frame(&dec->ctx, &fh);
+        if (ret != CRAP_OK) { free(compressed); return NULL; }
+
+        if (fh.stream_id >= CRAP_MAX_STREAMS ||
+            dec->ctx.streams[fh.stream_id].stream_type != STREAM_VIDEO) {
+            ret = crap_skip_frame(&dec->ctx, &fh);
+            if (ret != CRAP_OK) { free(compressed); return NULL; }
+            continue;
+        }
+
+        ret = crap_read_frame_data(&dec->ctx, &fh, compressed, max_compressed);
+        if (ret != CRAP_OK) { free(compressed); return NULL; }
+        break;
+    }
 
     CrapFrame *f = (CrapFrame *)pool_acquire(&dec->frame_pool);
 
@@ -113,7 +127,7 @@ CrapFrame *decoder_next_frame(CrapDecoder *dec) {
                 goto fail;
             }
 
-    ret = yuv_to_rgb24(&yf, rgb, dec->width, dec->height);
+    int ret = yuv_to_rgb24(&yf, rgb, dec->width, dec->height);
     free(yuv_buf); free(compressed);
     if (ret != 0) { free(rgb); pool_release(&dec->frame_pool, f); return NULL; }
     return f;

@@ -99,8 +99,10 @@ typedef struct {
     CrapFileHeader  header;
     CrapStreamInfo  streams[CRAP_MAX_STREAMS];
 
-    CrapIndexEntry *index; // heap allocated array
+    CrapIndexEntry *index;     // heap allocated array
     uint32_t        index_count;
+    uint32_t        index_cap;
+    int64_t         last_pts;  // max pts seen across all written frames
 } CrapContext;
 
 // API
@@ -108,11 +110,34 @@ int  crap_open_read (CrapContext *ctx, const char *path);
 int  crap_open_write(CrapContext *ctx, const char *path);
 void crap_close     (CrapContext *ctx);
 
+/* append one SINF chunk for a stream */
+int  crap_write_streaminfo(CrapContext *ctx, const CrapStreamInfo *si);
+
+/* write the FRIX index chunk (call once, after all frames, before header write) */
+int  crap_write_index(CrapContext *ctx);
+
 int  crap_read_frame (
     CrapContext     *ctx,
     CrapFrameHeader *fh,
     uint8_t         *buf,
     uint32_t         buf_size
+);
+
+/* read the next FRMD chunk header without consuming its payload */
+int  crap_peek_frame(CrapContext *ctx, CrapFrameHeader *fh);
+
+/* read payload + crc for a frame whose header was consumed by crap_peek_frame */
+int  crap_read_frame_data(
+    CrapContext     *ctx,
+    const CrapFrameHeader *fh,
+    uint8_t         *buf,
+    uint32_t         buf_size
+);
+
+/* consume the payload + crc for a frame whose header was consumed by crap_peek_frame */
+int  crap_skip_frame(
+    CrapContext           *ctx,
+    const CrapFrameHeader *fh
 );
 
 int  crap_write_frame(

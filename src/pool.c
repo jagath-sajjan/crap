@@ -23,9 +23,8 @@ int pool_init(MemPool *pool, size_t block_size, size_t block_count) {
   pool->block_count = block_count;
   pool->free_count  = block_count;
 
-  // build freelist: each block points to the next
   pool->free_head = NULL;
-  uint8_t *p = pool->slab+ block_size + (block_count - 1);
+  uint8_t *p = pool->slab + (block_count - 1) * block_size;
   for (size_t i = 0; i < block_count; i++) {
     PoolBlock *blk  = (PoolBlock *)p;
     blk->next       = pool->free_head;

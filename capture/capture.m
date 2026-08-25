@@ -20,7 +20,7 @@ static void handle_sig(int sig) {
     <AVCaptureVideoDataOutputSampleBufferDelegate,
      AVCaptureAudioDataOutputSampleBufferDelegate>
 @property (nonatomic, assign) CrapEncoder *enc;
-@property (nonatomic, assign) int          running;
+@property (nonatomic, assign) volatile int running;
 @property (nonatomic, assign) int64_t      start_us;
 @property (nonatomic, strong) dispatch_queue_t encode_q;
 @end
@@ -71,7 +71,9 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
         int64_t fpts = pts;
 
         dispatch_async(self.encode_q, ^{
-            encoder_write_iframe_rgb(enc, rgb, fw, fh2, fpts);
+            if (self.running) {
+                encoder_write_iframe_rgb(enc, rgb, fw, fh2, fpts);
+            }
             free(rgb);
         });
 
@@ -140,7 +142,9 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
             CrapEncoder *enc = self.enc;
             int64_t apts = pts;
             dispatch_async(self.encode_q, ^{
-                audio_write_frame(&enc->ctx, abuf, (uint32_t)sample_count, apts);
+                if (self.running) {
+                    audio_write_frame(&enc->ctx, abuf, (uint32_t)sample_count, apts);
+                }
                 free(abuf);
             });
         } else if (abuf) {
@@ -153,34 +157,48 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 int capture_run(const char *output_path, int quality,
                 uint32_t width, uint32_t height,
                 int duration_sec) {
-    /* request video permission */
-    dispatch_semaphore_t vsem = dispatch_semaphore_create(0);
-    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo
-                           completionHandler:^(BOOL g) {
-        (void)g; dispatch_semaphore_signal(vsem);
-    }];
-    dispatch_semaphore_wait(vsem, DISPATCH_TIME_FOREVER);
+    /* request video permission if needed */
+    if (@available(macOS 10.14, *)) {
+        AVAuthorizationStatus vstat = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+        if (vstat == AVAuthorizationStatusNotDetermined) {
+            dispatch_semaphore_t vsem = dispatch_semaphore_create(0);
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo
+                                   completionHandler:^(BOOL g) {
+                (void)g; dispatch_semaphore_signal(vsem);
+            }];
+            dispatch_semaphore_wait(vsem, DISPATCH_TIME_FOREVER);
+        }
 
-    dispatch_semaphore_t asem = dispatch_semaphore_create(0);
-    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio
-                           completionHandler:^(BOOL g) {
-        (void)g; dispatch_semaphore_signal(asem);
-    }];
-    dispatch_semaphore_wait(asem, DISPATCH_TIME_FOREVER);
+        AVAuthorizationStatus astat = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+        if (astat == AVAuthorizationStatusNotDetermined) {
+            dispatch_semaphore_t asem = dispatch_semaphore_create(0);
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio
+                                   completionHandler:^(BOOL g) {
+                (void)g; dispatch_semaphore_signal(asem);
+            }];
+            dispatch_semaphore_wait(asem, DISPATCH_TIME_FOREVER);
+        }
+    }
 
-    AVCaptureDevice *vdev = [AVCaptureDevice
-        defaultDeviceWithMediaType:AVMediaTypeVideo];
-    AVCaptureDevice *adev = [AVCaptureDevice
-        defaultDeviceWithMediaType:AVMediaTypeAudio];
+    AVCaptureDevice *vdev = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    AVCaptureDevice *adev = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
 
-    if (!vdev) { fprintf(stderr, "no camera\n"); return -1; }
-    if (!adev) { fprintf(stderr, "no mic\n");    return -1; }
+    if (!vdev) {
+        fprintf(stderr, "Error: No video camera device found.\n");
+        return -1;
+    }
+    if (!adev) {
+        fprintf(stderr, "Warning: No audio device found. Proceeding with video-only recording.\n");
+    }
 
     NSError *err = nil;
-    AVCaptureDeviceInput *vin =
-        [AVCaptureDeviceInput deviceInputWithDevice:vdev error:&err];
-    AVCaptureDeviceInput *ain =
-        [AVCaptureDeviceInput deviceInputWithDevice:adev error:&err];
+    AVCaptureDeviceInput *vin = [AVCaptureDeviceInput deviceInputWithDevice:vdev error:&err];
+    if (!vin) {
+        fprintf(stderr, "Error: Failed to open camera device: %s\n", err ? [[err localizedDescription] UTF8String] : "unknown");
+        return -1;
+    }
+
+    AVCaptureDeviceInput *ain = adev ? [AVCaptureDeviceInput deviceInputWithDevice:adev error:&err] : nil;
 
     AVCaptureSession *session = [[AVCaptureSession alloc] init];
     if ([session canSetSessionPreset:AVCaptureSessionPreset640x480]) {
@@ -192,7 +210,7 @@ int capture_run(const char *output_path, int quality,
     }
 
     if ([session canAddInput:vin]) [session addInput:vin];
-    if ([session canAddInput:ain]) [session addInput:ain];
+    if (ain && [session canAddInput:ain]) [session addInput:ain];
 
     AVCaptureVideoDataOutput *vout = [[AVCaptureVideoDataOutput alloc] init];
     vout.videoSettings = @{
@@ -202,7 +220,7 @@ int capture_run(const char *output_path, int quality,
     };
     vout.alwaysDiscardsLateVideoFrames = YES;
 
-    AVCaptureAudioDataOutput *aout = [[AVCaptureAudioDataOutput alloc] init];
+    AVCaptureAudioDataOutput *aout = ain ? [[AVCaptureAudioDataOutput alloc] init] : nil;
 
     dispatch_queue_t vq = dispatch_queue_create("crap.vcap",
         dispatch_queue_attr_make_with_qos_class(
@@ -218,24 +236,26 @@ int capture_run(const char *output_path, int quality,
         return ret;
     }
 
-    CrapStreamInfo asi;
-    memset(&asi, 0, sizeof(asi));
-    asi.stream_id    = 1;
-    asi.stream_type  = STREAM_AUDIO;
-    asi.codec_id     = 0x0002;
-    asi.sample_rate  = 44100;
-    asi.channels     = 2;
-    asi.bit_depth    = 16;
-    asi.time_base_num = 1;
-    asi.time_base_den = 1000000;
-    int aret = crap_write_streaminfo(&enc.ctx, &asi);
-    if (aret != CRAP_OK) {
-        fprintf(stderr, "crap_write_streaminfo failed: %d\n", aret);
-        return aret;
+    if (ain && aout) {
+        CrapStreamInfo asi;
+        memset(&asi, 0, sizeof(asi));
+        asi.stream_id    = 1;
+        asi.stream_type  = STREAM_AUDIO;
+        asi.codec_id     = 0x0002;
+        asi.sample_rate  = 44100;
+        asi.channels     = 2;
+        asi.bit_depth    = 16;
+        asi.time_base_num = 1;
+        asi.time_base_den = 1000000;
+        int aret = crap_write_streaminfo(&enc.ctx, &asi);
+        if (aret != CRAP_OK) {
+            fprintf(stderr, "crap_write_streaminfo failed: %d\n", aret);
+            encoder_close(&enc);
+            return aret;
+        }
     }
 
-    CrapCaptureDelegate * __strong delegate =
-        [[CrapCaptureDelegate alloc] init];
+    CrapCaptureDelegate *delegate = [[CrapCaptureDelegate alloc] init];
     delegate.enc      = &enc;
     delegate.running  = 0;
     delegate.encode_q = dispatch_queue_create("crap.encode",
@@ -243,10 +263,10 @@ int capture_run(const char *output_path, int quality,
             DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
 
     [vout setSampleBufferDelegate:delegate queue:vq];
-    [aout setSampleBufferDelegate:delegate queue:aq];
+    if (aout) [aout setSampleBufferDelegate:delegate queue:aq];
 
     if ([session canAddOutput:vout]) [session addOutput:vout];
-    if ([session canAddOutput:aout]) [session addOutput:aout];
+    if (aout && [session canAddOutput:aout]) [session addOutput:aout];
 
     [session startRunning];
 
@@ -259,8 +279,9 @@ int capture_run(const char *output_path, int quality,
     signal(SIGINT, handle_sig);
     signal(SIGTERM, handle_sig);
 
-    fprintf(stderr, "Recording %ds to %s (640x480 q%d)...\n",
-            duration_sec, output_path, quality);
+    fprintf(stderr, "Recording %ds to %s (%ux%u q%d, %s)...\n",
+            duration_sec, output_path, width, height, quality,
+            ain ? "video+audio" : "video only");
 
     for (int i = 0; i < duration_sec * 10 && !g_stop; i++) {
         [NSThread sleepForTimeInterval:0.1];
@@ -272,6 +293,6 @@ int capture_run(const char *output_path, int quality,
     dispatch_sync(delegate.encode_q, ^{});
 
     encoder_close(&enc);
-    fprintf(stderr, "Done.\n");
+    fprintf(stderr, "Recording complete: %s\n", output_path);
     return 0;
 }

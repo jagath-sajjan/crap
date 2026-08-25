@@ -11,6 +11,9 @@ test_e2e_asan
 *.dSYM/
 craprec
 crapplay
+crappr
+recordings/
 *.crap
 .idea/
 .DS_Store
+crap-*.tar.gz

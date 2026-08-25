@@ -28,7 +28,8 @@ Prebuilt binaries for macOS Apple Silicon (`arm64`) are available on the [Releas
 tar -xzvf crap-macos-arm64.tar.gz
 ```
 
-### 2. Run the Tools
+### 2. Run the Tools 
+>it may say move to bin fix: system settings > security > scroll down open/run anyways<
 
 ```bash
 # launch screen & camera recorder
